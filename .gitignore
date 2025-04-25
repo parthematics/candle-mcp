@@ -1,0 +1,4 @@
+.cursor
+dist
+node_modules
+.env
