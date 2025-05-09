@@ -28,7 +28,7 @@ async function searchSimilarQuestions(query: string): Promise<any[]> {
     body: JSON.stringify({
       filters: {},
       page: 1,
-      page_size: 20,
+      page_size: 5,
       typo_options: {
         correct_typos: true,
       },
@@ -73,6 +73,31 @@ const searchSimilarQuestionsTool: Tool = {
   },
 };
 
+const bulkSearchTopSimilarQuestionsTool: Tool = {
+  name: "bulkSearchTopSimilarQuestions",
+  description:
+    "Finds similar questions from a structured corpus of relationship prompts.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      queries: {
+        type: "array",
+        items: {
+          type: "string",
+          description:
+            "A question, phrase, or theme to search related prompts for",
+        },
+      },
+      limit: {
+        type: "number",
+        description: "The number of results to return",
+        default: 3,
+      },
+    },
+    required: ["queries", "limit"],
+  },
+};
+
 // Tool handler
 async function handleSearchSimilarQuestionsTool(query: string) {
   const results = await searchSimilarQuestions(query);
@@ -85,6 +110,40 @@ async function handleSearchSimilarQuestionsTool(query: string) {
     ],
     isError: false,
   };
+}
+
+async function handleBulkSearchTopSimilarQuestionsTool(
+  queries: string[],
+  limit: number = 3
+): Promise<
+  Record<string, Array<{ text: string; score: number; category?: string }>>
+> {
+  const results: Record<
+    string,
+    Array<{ text: string; score: number; category?: string }>
+  > = {};
+
+  // Process queries in parallel for better performance
+  const searchPromises = queries.map(async (query) => {
+    try {
+      const searchResults = await searchSimilarQuestions(query);
+      // Return top N most similar questions for each query
+      results[query] = searchResults
+        .sort((a, b) => b.score - a.score) // Sort by score descending
+        .slice(0, limit) // Take only top N results
+        .map((result) => ({
+          text: result.text,
+          score: result.score,
+          category: result.category,
+        }));
+    } catch (error) {
+      console.error(`Error searching for query "${query}":`, error);
+      results[query] = [];
+    }
+  });
+
+  await Promise.all(searchPromises);
+  return results;
 }
 
 async function main() {
@@ -103,7 +162,7 @@ async function main() {
 
   // list tools endpoint
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [searchSimilarQuestionsTool],
+    tools: [searchSimilarQuestionsTool, bulkSearchTopSimilarQuestionsTool],
   }));
 
   // call tool endpoint
@@ -113,6 +172,12 @@ async function main() {
         case "searchSimilarQuestions": {
           const { query } = request.params.arguments as { query: string };
           return await handleSearchSimilarQuestionsTool(query);
+        }
+        case "bulkSearchTopSimilarQuestions": {
+          const { queries } = request.params.arguments as {
+            queries: string[];
+          };
+          return await handleBulkSearchTopSimilarQuestionsTool(queries);
         }
         default:
           return {
